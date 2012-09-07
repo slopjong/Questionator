@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# convert the files to utf-8
+#for i in $(ls -1 bio-*/*/*/{answers,questions}.txt);
+#do
+#	#echo "Processing $i"
+#	file $i | grep -v UTF-8 #| cut -d ':' -f 1 | iconv -t utf-8 - | sponge $i
+#	#iconv -t utf-8 $i | sponge $i
+#done
+
+generatePerChapter=false
+
+./generate-json.php per_chapter=${generatePerChapter} questionary=Biology
+
+# don't reformat if the catalog is generated chapterwise
+if [ "$generatePerChapter" == "false" ]; then
+	cat catalog.json | json_reformat | sponge catalog.json
+fi

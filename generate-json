@@ -1,0 +1,350 @@
+#!/usr/bin/php
+<?php
+
+// Debugging messages enabled?
+define('DEBUG', false);
+
+/*
+# Author: slopjong
+# License: FreeBSD License
+# -------------------------------------
+# Copyright (c) 2012, Romain Schmitz
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met: 
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer. 
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution. 
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# The views and conclusions contained in the software and documentation are those
+# of the authors and should not be interpreted as representing official policies, 
+# either expressed or implied, of the FreeBSD Project.
+*/
+
+
+	/**
+	 * Function debugMsg borrowed from
+	 * 
+	 *   http://www.php.net/manual/en/debugger.php#94702
+	 */
+	function debugMsg($msg)
+	{
+	  if (DEBUG)
+		echo "INFO: $msg\n";
+	}
+
+	// scan the cli arguments
+	if($argc>1)
+	{
+		foreach($argv as $arg)
+		{
+			$input = explode("=", $arg);
+			// has the argument had a =?
+			if(count($input)>1)
+			{
+				$val = $input[1];
+				switch($input[0]){
+					
+					case "catalog_filename":
+						$catalog_filename = $val;
+						break;
+					
+					case "per_chapter":
+						$per_chapter = ($val == "true") ? true : false;
+						break;
+					
+					case "questionary":
+						$questionary = $val;
+						break;
+				}
+			}
+		}
+	}
+
+	// example array elements: "chapter1", "chapter9"
+	$chapters_to_skip = array(
+	);
+	
+	// should every second question be excluded from the questions catalog?
+	$skip_questions = false;
+
+	// to what file should the catalog be written?
+	if(! isset($catalog_filename))
+		$catalog_filename = "catalog.json";
+	
+	// generate a questions.json per chapter?
+	if(!isset($per_chapter))
+		$per_chapter = false;
+		
+	if(!isset($questionary))
+	{
+		echo "No catalog to be generated.";
+		exit;
+	}
+	
+	/************************************************************************/
+	
+	// this is the question collection with each question stored as
+	// its own class member with a numeric member access name
+	class Questions
+	implements Countable, ArrayAccess
+	{
+		private $m_count = 0;
+		public function count() { return $this->m_count; }
+		public function offsetExists($offset) { return false;	}
+		public function offsetGet($offset) { return 0; }
+		public function offsetSet($offset, $value) {}
+		public function offsetUnset($offset) {}
+		public function addQuestion($question) {
+			$nextId = $this->m_count + 1;
+			// the question is stored with a numeric member name
+			$this->$nextId = $question;
+			$this->m_count++;
+			return $nextId;
+		}
+	}
+
+	// instance of the question collection
+	$quiz_questions = new Questions();
+	
+	// not yet used
+	//$custom_groups = new stdClass;
+	//$custom_groups->collections = array();
+	
+	// the chapter/category titles
+	$titles = new stdClass;
+	
+	/**
+	 * Populates the level, exam and chapter titles. The level and exam
+	 * titles are set once only even if they are passed in multiple iterations.
+	 *
+	 * All the arguments are arrays with one key value pair.
+	 */
+	function add_title($level_key_title, $exam_key_title, $chapter_key_title)
+	{
+		global $titles;
+		
+		if(!isset($titles->level))
+			$titles->level = array();
+		
+		$level_title = current($level_key_title);
+		$level_key = key($level_key_title);
+		
+		// this initializes a new level entry with a title and an exam array
+		if(!isset($titles->level[$level_key]))
+		{
+			$titles->level[$level_key] = (object) array(
+				"title" => $level_title,
+				"exam" => array()
+			);
+		}
+		
+		$exam_title = current($exam_key_title);
+		$exam_key = key($exam_key_title);
+		
+		// this initializes a new exam entry with a title and a chapter array
+		if(!isset($titles->level[$level_key]->exam[$exam_key]))
+		{
+			$titles->level[$level_key]->exam[$exam_key] = (object) array(
+				"title" => $exam_title,
+				"chapter" => array()
+			);
+		}
+
+		$chapter_title = current($chapter_key_title);
+		$chapter_key = key($chapter_key_title);
+		
+		// this initializes a new title for the given chapter
+		if(!isset($titles->level[$level_key]->exam[$exam_key]->chapter[$chapter_key]))
+		{
+			$titles	->level[$level_key]
+					->exam[$exam_key]
+					->chapter[$chapter_key] = $chapter_title;
+		}		
+	}
+	
+	// question groups
+	$question_groups = array();
+	
+	// iterate over all the certification levels
+	if (is_dir($questionary) && $questionary_dir = opendir($questionary))
+	{
+		debugMsg("Entering the catalog directory '$questionary'");
+		
+		while (false !== ($level = readdir($questionary_dir)))
+		{
+			// don't consider . and ..
+			if ( $level != "." && $level != ".." && is_dir($questionary.'/'.$level)
+				&& $level_dir=opendir($questionary.'/'.$level) )
+			{
+				debugMsg("Entering the catalog level '$level'");
+				
+				$level_title = trim(file_get_contents($questionary.'/'.$level.'/title'));
+						 
+				$question_groups[$level] = array();
+				
+				// iterate over the single exams of the current level
+				while (false !== ($exam = readdir($level_dir)))
+				{
+					// don't consider . and ..
+					if ( $exam != "." && $exam != ".." && is_dir($questionary.'/'.$level.'/'.$exam)
+						&& $exam_dir=opendir($questionary.'/'.$level.'/'.$exam) )
+					{
+						debugMsg("Entering the exam '$exam'");
+						
+						$title_file = $questionary.'/'.$exam.'/title';
+						if(file_exists($title_file))
+							$exam_title = trim(file_get_contents($title_file));
+						else
+							$exam_title = "";
+						
+						$question_groups[$level][$exam] = array();
+						
+						// iterate over the chapters
+						while (false !== ($chapter = readdir($exam_dir)))
+						{
+							// don't consider . and ..
+							if ( $chapter != "." && $chapter != ".."
+									&& is_dir($questionary.'/'.$level.'/'.$exam.'/'.$chapter) )
+							{
+								debugMsg("Entering the chapter '$chapter'");
+								
+								$question_groups[$level][$exam][$chapter] = array();
+								
+								$chapter_path = "$questionary/$level/$exam/$chapter";
+								
+								// fetch the questions
+								$file_name = "$chapter_path/questions.txt";
+								$file = file_get_contents($file_name);
+								$questions = preg_split("/^(?=[0-9][0-9]?\\.\s)/m", $file);
+								array_shift($questions);
+								
+								// fetch the options
+								$file_name = "$chapter_path/answers.txt";
+								$file_content = file_get_contents($file_name);
+								$answers = preg_split("|^\d{1,2}\\.|m",$file_content);
+								array_shift($answers);
+								
+								// counter i used in the modulo operation to skip every n-th
+								// question if enabled
+								$i = 0;
+								$n = 2;
+								foreach ( $questions as $key => $question )
+								{
+									if($skip_questions && ($i++ % $n == 0) )
+										continue;
+										
+									$split = preg_split("/^(?=A\\.)/m", $question);
+									
+									$question = $split[0];
+									// remove the question number and trim the spaces
+									$question = trim(preg_replace("|^[^.]*\\.|", "", $question));
+									
+									if(count($split)<2)
+									{
+										$options = array();
+										$correct = array();
+										$explanation = "";
+									}
+									else
+									{
+										$options = $split[1];
+										$options = preg_split("|\n(?=[A-Z]\\.)|", $options);																		
+									
+										foreach ( $options as $key2 => $option)
+										{
+											$option = trim($option);
+											$option = preg_replace("|^[A-Z]\\.|","", $option );
+											$option = trim($option);
+											$options[$key2] = $option;																			
+										}
+										
+										$answer = $answers[$key];
+										
+										// An answer contains something like this:  A, B, C. Typing R in command mode ...
+										
+										// TODO: what sense does this trim make?
+										trim($answer); // remove beginning and trailing whitespaces
+										
+										// get the A, B, C characters which stands for the correct question options
+										// and turn them into numbers
+										preg_match("|^[^.]*|", $answer, $correct);
+										$correct = preg_replace("|\s*|", "", $correct[0]);
+										$correct = split(",", $correct);
+										foreach($correct as $key2 => $c)
+										{
+											$correct[$key2] = ord($c) - 65;				
+										}
+										
+										// extract the explanation
+										$explanation = trim(preg_replace("|^[^.]*\\.|", "", $answer));
+									}
+									
+									$q = new stdClass;
+									$q->question = $question;
+									$q->options = $options;
+									$q->correct = $correct;
+									$q->explanation = $explanation;
+									$q->category = $exam .".". $chapter;
+									
+									$question_id = $quiz_questions->addQuestion($q);
+									array_push($question_groups[$level][$exam][$chapter], $question_id);
+									
+									// populate the titles for the current level, exam and chapter
+									$chapter_title = file_get_contents($chapter_path."/title");
+									$chapter_title = trim($chapter_title);
+
+									add_title(
+											array( $level => $level_title),
+											array( $exam => $exam_title),
+											array( $chapter => $chapter_title)
+									);
+								}
+								
+								if($per_chapter)
+								{
+									$json = json_encode($quiz_questions);
+									file_put_contents($level.'/'.$exam.'/'.$chapter.'/'.$catalog_filename, $json);
+								}
+							}
+						}
+						closedir($exam_dir);
+					}
+				}
+				closedir($level_dir);
+			}
+		}
+		closedir($questionary_dir);
+	}   
+
+	$metainf = new stdClass;
+	$metainf->name = $questionary;
+	$metainf->model = 1.0;
+	
+	$catalog = new stdClass;
+	$catalog->metainf = $metainf;
+	$catalog->titles = $titles;
+	$catalog->question_groups = $question_groups;
+	$catalog->questions = $quiz_questions;
+	
+	if(!$per_chapter)
+	{
+		$json = json_encode($catalog);
+		file_put_contents($catalog_filename, $json);
+	}
+?>
