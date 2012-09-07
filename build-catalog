@@ -10,7 +10,7 @@
 
 generatePerChapter=false
 
-./generate-json.php per_chapter=${generatePerChapter} questionary=Biology
+./generate-json per_chapter=${generatePerChapter} questionary=Biology
 
 # don't reformat if the catalog is generated chapterwise
 if [ "$generatePerChapter" == "false" ]; then
