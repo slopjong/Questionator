@@ -1,5 +1,23 @@
 #!/bin/bash
 
+generatePerChapter=false
+catdir="Biology"
+output="catalog.json"
+
+# if only one argument was passed we assume it was -h
+if [ $# -eq 1 ];
+then
+	echo "Usage: build-catalog <catalog directory> <output file>"
+fi
+
+# if two arguments were passed the first will be the catalog directory
+# and the last one the file which should be written to
+if [ $# -eq 2 ];
+then
+	catdir=$1
+	output=$2
+fi
+
 # convert the files to utf-8
 #for i in $(ls -1 bio-*/*/*/{answers,questions}.txt);
 #do
@@ -8,11 +26,10 @@
 #	#iconv -t utf-8 $i | sponge $i
 #done
 
-generatePerChapter=false
-
-./generate-json per_chapter=${generatePerChapter} questionary=Biology
+./generate-json per_chapter=${generatePerChapter} questionary=${catdir} catalog_filename=${output}
 
 # don't reformat if the catalog is generated chapterwise
-if [ "$generatePerChapter" == "false" ]; then
-	cat catalog.json | json_reformat | sponge catalog.json
+if [  -f "$output" -a "$generatePerChapter" == "false" ]; 
+then
+	cat ${output} | json_reformat | sponge ${output}
 fi
