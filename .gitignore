@@ -1,1 +1,7 @@
 *.json
+
+#ignore any directories which are catalog directories until now
+/*/*
+
+# don't ignore the Biology directory
+!Biology/*
